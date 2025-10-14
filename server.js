@@ -12,14 +12,12 @@ import callRoutes from './routes/callRoutes.js';
 import storyRoutes from './routes/storyRoutes.js';
 import setupSocketHandlers from './utils/socketHandler.js';
 
-
 // Route imports
 import authRoutes from './routes/authRoutes.js';
 import userRoutes from './routes/userRoutes.js';
 import postRoutes from './routes/postRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import verificationRoutes from './routes/verificationRoutes.js';
-
 
 // Load env vars
 dotenv.config();
@@ -31,20 +29,53 @@ connectDB();
 const app = express();
 const httpServer = createServer(app);
 
-// Socket.IO setup
+// CORS Configuration for Production
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  process.env.CORS_ORIGIN,
+  'http://localhost:5173',
+].filter(Boolean);
+
+console.log('🌐 Allowed CORS origins:', allowedOrigins);
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (mobile apps, Postman, server-to-server, etc.)
+    if (!origin) {
+      console.log('✅ Allowing request with no origin');
+      return callback(null, true);
+    }
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      console.log('✅ CORS allowed for:', origin);
+      callback(null, true);
+    } else {
+      console.log('❌ CORS blocked for:', origin);
+      console.log('📋 Allowed origins:', allowedOrigins);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+  exposedHeaders: ['Set-Cookie']
+};
+
+// Apply CORS middleware
+app.use(cors(corsOptions));
+
+// Socket.IO setup with enhanced CORS
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST']
-  }
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
 });
 
 // Middleware
-app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true
-}));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(cookieParser());
@@ -206,35 +237,3 @@ process.on('unhandledRejection', (err) => {
   console.log(`❌ Error: ${err.message}`);
   httpServer.close(() => process.exit(1));
 });
-
-
-
-
-// CORS Configuration for Production
-const allowedOrigins = [
-  process.env.CLIENT_URL,
-  process.env.CORS_ORIGIN,
-  'http://localhost:5173', // for local development
-].filter(Boolean); // Remove any undefined values
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('❌ Blocked by CORS:', origin);
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-};
-
-app.use(cors(corsOptions));
-
-// Handle preflight requests
-app.options('*', cors(corsOptions));
