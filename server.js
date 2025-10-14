@@ -208,9 +208,7 @@ process.on('unhandledRejection', (err) => {
 });
 
 
-// backend/src/server.js or app.js
 
-import cors from 'cors';
 
 // CORS Configuration for Production
 const allowedOrigins = [
