@@ -8,11 +8,22 @@ import User from '../models/User.js';
 // @access  Private
 export const saveCall = async (req, res) => {
   try {
-    const { receiverId, type, status, duration } = req.body;
+    const { receiverId, callerId, type, status, duration } = req.body;
+
+    const finalCallerId = callerId || req.user._id;
+    const finalReceiverId = receiverId;
+
+    if (!finalReceiverId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Receiver ID is required'
+      });
+    }
+
 
     const callHistory = await CallHistory.create({
-      caller: req.user._id,
-      receiver: receiverId,
+      caller: finalCallerId,
+      receiver: finalReceiverId,
       type: type || 'audio',
       status: status || 'missed',
       duration: duration || 0

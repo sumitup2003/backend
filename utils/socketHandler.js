@@ -1,264 +1,280 @@
-// backend/utils/socketHandler.js
 
-import CallHistory from '../models/CallHistory.js';
+// setupSocketHandlers.js/backend/utils
+import CallHistory from "../models/CallHistory.js";
 
 const users = new Map(); // userId -> socketId
-const activeCalls = new Map(); // callId -> { caller, receiver, startTime, type }
+const activeCalls = new Map(); // callId -> call data
 
 export const setupSocketHandlers = (io) => {
-  io.on('connection', (socket) => {
-    const userId = socket.handshake.auth.userId;
-    console.log(`✅ User connected: ${userId} (Socket: ${socket.id})`);
+  console.log("🔌 setupSocketHandlers initialized");
 
-    // Store user socket mapping
+  io.on("connection", (socket) => {
+    const userId = socket.handshake.auth.userId;
+    console.log(`\n✅ USER CONNECTED`);
+    console.log(`   User ID: ${userId}`);
+    console.log(`   Socket ID: ${socket.id}`);
+    console.log(`   Total users: ${users.size + 1}`);
+
+    // Store user
     users.set(userId, socket.id);
-    
-    // Notify others user is online
-    socket.broadcast.emit('user:online', userId);
+    console.log(`   Users online: ${Array.from(users.keys()).join(", ")}`);
+
+    // Broadcast online status
+    socket.broadcast.emit("user:online", userId);
 
     // ============ CALL EVENTS ============
 
-    // Handle call initiation
-    socket.on('call:initiate', async (data) => {
-      const { to, from, type, offer, callerInfo } = data;
+    socket.on("call:initiate", async (data) => {
+      console.log(`\n📞 EVENT: call:initiate received`);
+      console.log(`   From: ${data.from}`);
+      console.log(`   To: ${data.to}`);
+      console.log(`   Type: ${data.type}`);
+
+      const { to, from, type, offer, callerInfo, callId } = data;
       const receiverSocketId = users.get(to);
 
-      console.log(`📞 Call initiated: ${from} -> ${to} (${type})`);
+      console.log(`   Receiver socket ID: ${receiverSocketId || "NOT FOUND"}`);
+      console.log(`   Available users: ${Array.from(users.entries()).map(([id, sid]) => `${id}:${sid}`).join(", ")}`);
 
       if (receiverSocketId) {
-        // Create call record
-        const callId = `${from}-${to}-${Date.now()}`;
-        activeCalls.set(callId, {
+        // Use provided callId or generate one
+        const finalCallId = callId || `${from}-${to}-${Date.now()}`;
+        
+        activeCalls.set(finalCallId, {
           caller: from,
           receiver: to,
           type,
           startTime: null,
-          status: 'ringing'
+          status: "ringing",
         });
 
-        // Send incoming call to receiver
-        io.to(receiverSocketId).emit('call:incoming', {
-          callId,
+        console.log(`   ✅ EMITTING call:incoming to ${to}`);
+        console.log(`   Call ID: ${finalCallId}`);
+
+        io.to(receiverSocketId).emit("call:incoming", {
+          callId: finalCallId,
           from,
           type,
+          // offer,
+          callerInfo,
+        });
+       io.to(receiverSocketId).emit("call:offer", {
+          from,
+          callId: finalCallId,
           offer,
-          callerInfo
         });
 
-        console.log(`🔔 Incoming call sent to ${to}`);
+        console.log(`   ✅ WebRTC offer sent to receiver`);
       } else {
-        // Receiver is offline - save as missed call immediately
-        socket.emit('call:user-offline', { to });
-        
+        console.log(`   ❌ RECEIVER OFFLINE`);
+        socket.emit("call:user-offline", { to });
+
         await CallHistory.create({
           caller: from,
           receiver: to,
           type,
-          status: 'missed',
-          duration: 0
+          status: "missed",
+          duration: 0,
         });
-
-        console.log(`📵 User ${to} is offline - call marked as missed`);
       }
     });
 
-    // Handle call answer
-    socket.on('call:answer', async (data) => {
-      const { callId, answer } = data;
+    socket.on("call:answer", async (data) => {
+      console.log(`\n✅ EVENT: call:answer received`);
+      console.log(`   Call ID: ${data.callId}`);
+      console.log(`   From: ${data.from}`);
+      console.log(`   To: ${data.to}`);
+
+      const { callId, answer, to } = data;
       const call = activeCalls.get(callId);
 
       if (call) {
         call.startTime = Date.now();
-        call.status = 'connected';
+        call.status = "connected";
         activeCalls.set(callId, call);
 
-        const callerSocketId = users.get(call.caller);
+        const callerSocketId = users.get(to || call.caller);
         if (callerSocketId) {
-          io.to(callerSocketId).emit('call:answered', {
+          io.to(callerSocketId).emit("call:answered", {
             callId,
-            answer
+            answer,
           });
+          console.log(`   ✅ Answer sent to caller`);
         }
-
-        console.log(`✅ Call answered: ${callId}`);
+      } else {
+        console.log(`   ⚠️ Call not found`);
       }
     });
 
-    // Handle call rejection
-    socket.on('call:reject', async (data) => {
+    socket.on("call:reject", async (data) => {
+      console.log(`\n❌ EVENT: call:reject received`);
+      console.log(`   Call ID: ${data.callId}`);
+
       const { callId, to } = data;
       const call = activeCalls.get(callId);
 
       if (call) {
-        // Save rejected call to history
         await CallHistory.create({
           caller: call.caller,
           receiver: call.receiver,
           type: call.type,
-          status: 'rejected',
-          duration: 0
+          status: "rejected",
+          duration: 0,
         });
 
-        const callerSocketId = users.get(call.caller);
+        const callerSocketId = users.get(to || call.caller);
         if (callerSocketId) {
-          io.to(callerSocketId).emit('call:rejected', { callId });
+          io.to(callerSocketId).emit("call:rejected", { callId });
         }
 
         activeCalls.delete(callId);
-        console.log(`❌ Call rejected: ${callId}`);
+        console.log(`   ✅ Call rejected and removed from active calls`);
       }
     });
 
-    // Handle call end
-    socket.on('call:end', async (data) => {
-      const { callId, to } = data;
+    socket.on("call:end", async (data) => {
+      console.log(`\n📴 EVENT: call:end received`);
+      console.log(`   Call ID: ${data.callId}`);
+      console.log(`   User ID: ${data.userId || userId}`);
+
+
+      const { callId, to, userId: endingUserId } = data;
       const call = activeCalls.get(callId);
 
       if (call) {
-        const duration = call.startTime 
-          ? Math.floor((Date.now() - call.startTime) / 1000) 
+        const duration = call.startTime
+          ? Math.floor((Date.now() - call.startTime) / 1000)
           : 0;
 
-        // Save call to history
         await CallHistory.create({
           caller: call.caller,
           receiver: call.receiver,
           type: call.type,
-          status: call.startTime ? 'answered' : 'cancelled',
-          duration
+          status: call.startTime ? "answered" : "cancelled",
+          duration,
         });
 
-        // Notify the other user
-        const otherUserId = call.caller === userId ? call.receiver : call.caller;
+        const otherUserId = to || (call.caller === (endingUserId || userId) ? call.receiver : call.caller);
         const otherSocketId = users.get(otherUserId);
-        
+
         if (otherSocketId) {
-          io.to(otherSocketId).emit('call:ended', { callId, duration });
+          io.to(otherSocketId).emit("call:ended", { callId, duration });
         }
 
         activeCalls.delete(callId);
-        console.log(`📴 Call ended: ${callId}, Duration: ${duration}s`);
-      }
-    });
-
-    // If caller cancels before answer (missed call)
-    socket.on('call:cancel', async (data) => {
-      const { callId, to } = data;
-      const call = activeCalls.get(callId);
-
-      if (call && !call.startTime) {
-        // Save as missed call
-        await CallHistory.create({
-          caller: call.caller,
-          receiver: call.receiver,
-          type: call.type,
-          status: 'missed',
-          duration: 0
-        });
-
-        const receiverSocketId = users.get(to);
-        if (receiverSocketId) {
-          io.to(receiverSocketId).emit('call:missed', { callId });
-        }
-
-        activeCalls.delete(callId);
-        console.log(`📵 Call missed: ${callId}`);
+        console.log(`   ✅ Call ended, saved, and removed from active calls`);
+      } else {
+        console.log(`   ⚠️ Call not found in activeCalls`);
+        console.log(`   Active calls: ${Array.from(activeCalls.keys()).join(", ")}`);
       }
     });
 
     // ============ WEBRTC SIGNALING ============
 
-    socket.on('call:offer', (data) => {
-      const { to, offer } = data;
+    socket.on("call:offer", (data) => {
+      console.log(`📨 EVENT: call:offer received from ${userId}`);
+      const { to, offer, callId } = data;
       const receiverSocketId = users.get(to);
+
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit('call:offer', {
+        io.to(receiverSocketId).emit("call:offer", {
           from: userId,
-          offer
+          callId,
+          offer,
         });
+        console.log(`   ✅ Offer forwarded to ${to}`);
       }
     });
 
-    socket.on('call:answer-signal', (data) => {
-      const { to, answer } = data;
+    socket.on("call:answer-signal", (data) => {
+      console.log(`📨 EVENT: call:answer-signal received from ${userId}`);
+      const { to, answer, callId } = data;
       const callerSocketId = users.get(to);
+
       if (callerSocketId) {
-        io.to(callerSocketId).emit('call:answer-signal', {
+        io.to(callerSocketId).emit("call:answer-signal", {
           from: userId,
-          answer
+          callId,
+          answer,
         });
+        console.log(`   ✅ Answer forwarded to ${to}`);
       }
     });
 
-    socket.on('call:ice-candidate', (data) => {
-      const { to, candidate } = data;
+    socket.on("call:ice-candidate", (data) => {
+      const { to, candidate, callId } = data;
       const receiverSocketId = users.get(to);
+
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit('call:ice-candidate', {
+        io.to(receiverSocketId).emit("call:ice-candidate", {
           from: userId,
-          candidate
+          callId,
+          candidate,
         });
       }
     });
 
     // ============ MESSAGE EVENTS ============
 
-    socket.on('message:send', (data) => {
-      const { receiverId, text, senderId } = data;
+    socket.on("message:send", (data) => {
+      const { receiverId } = data;
       const receiverSocketId = users.get(receiverId);
-      
+
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit('message:receive', data);
+        io.to(receiverSocketId).emit("message:receive", data);
       }
     });
 
-    socket.on('typing:start', (receiverId) => {
+    socket.on("typing:start", (receiverId) => {
       const receiverSocketId = users.get(receiverId);
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit('user:typing', userId);
+        io.to(receiverSocketId).emit("user:typing", userId);
       }
     });
 
-    socket.on('typing:stop', (receiverId) => {
+    socket.on("typing:stop", (receiverId) => {
       const receiverSocketId = users.get(receiverId);
       if (receiverSocketId) {
-        io.to(receiverSocketId).emit('user:stop-typing', userId);
+        io.to(receiverSocketId).emit("user:stop-typing", userId);
       }
     });
 
     // ============ DISCONNECT ============
 
-    socket.on('disconnect', async () => {
-      console.log(`❌ User disconnected: ${userId}`);
-      users.delete(userId);
-      
-      // Notify others user is offline
-      socket.broadcast.emit('user:offline', userId);
+    socket.on("disconnect", () => {
+      console.log(`\n❌ USER DISCONNECTED`);
+      console.log(`   User ID: ${userId}`);
+      console.log(`   Socket ID: ${socket.id}`);
 
-      // End any active calls for this user
+      users.delete(userId);
+      socket.broadcast.emit("user:offline", userId);
+
+      console.log(`   Users remaining: ${users.size}`);
+      console.log(`   Remaining users: ${Array.from(users.keys()).join(", ")}\n`);
+
+      // End active calls
       for (const [callId, call] of activeCalls.entries()) {
         if (call.caller === userId || call.receiver === userId) {
           const otherUserId = call.caller === userId ? call.receiver : call.caller;
           const otherSocketId = users.get(otherUserId);
 
           if (otherSocketId) {
-            io.to(otherSocketId).emit('call:ended', { 
-              callId, 
-              reason: 'disconnect' 
+            io.to(otherSocketId).emit("call:ended", {
+              callId,
+              reason: "disconnect",
             });
           }
 
-          // Save call history
-          const duration = call.startTime 
-            ? Math.floor((Date.now() - call.startTime) / 1000) 
+          const duration = call.startTime
+            ? Math.floor((Date.now() - call.startTime) / 1000)
             : 0;
 
-          await CallHistory.create({
+          CallHistory.create({
             caller: call.caller,
             receiver: call.receiver,
             type: call.type,
-            status: call.startTime ? 'answered' : 'missed',
-            duration
+            status: call.startTime ? "answered" : "missed",
+            duration,
           });
 
           activeCalls.delete(callId);
