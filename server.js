@@ -116,8 +116,8 @@ httpServer.listen(PORT, () => {
 process.on('unhandledRejection', (err) => {
   console.log(`❌ Error: ${err.message}`);
   httpServer.close(() => process.exit(1));
-<<<<<<< HEAD
+
 });
-=======
-});
->>>>>>> a57f20e135dccfd03a40811cb5c929b9817c7a06
+
+
+
