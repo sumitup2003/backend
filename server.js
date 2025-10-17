@@ -18,6 +18,7 @@ import userRoutes from './routes/userRoutes.js';
 import postRoutes from './routes/postRoutes.js';
 import messageRoutes from './routes/messageRoutes.js';
 import verificationRoutes from './routes/verificationRoutes.js';
+import newsRoutes from './routes/newsRoutes.js';
 
 // Load env vars
 dotenv.config();
@@ -93,6 +94,7 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/calls', callRoutes);
 app.use('/api/stories', storyRoutes);
 app.use('/api/verification', verificationRoutes);
+app.use('/api/news', newsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -118,9 +120,3 @@ process.on('unhandledRejection', (err) => {
   httpServer.close(() => process.exit(1));
 
 });
-<<<<<<< HEAD
-
-
-
-=======
->>>>>>> bfa654df4bd686fd264c75f0c906bcd5e9af1f1a
